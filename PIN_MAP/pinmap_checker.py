@@ -29,8 +29,9 @@ class PIN_CHECKER:
         self.data_pre_processing(self.data_col_list,self.data_row_list, self.data,self.del_char,self.first_make_zero)
         self.number_of_cases = []
         self.aa = 0
+        print(self.data)
         self.check_pin_map(self.data_col_list,self.data_row_list,self.data, self.aa)
-        print("check")
+        # print("check")
         
 #file path + file name
     def readExel(self, xlse_path, sheetName):
