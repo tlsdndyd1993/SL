@@ -9,7 +9,6 @@ from openpyxl import load_workbook
 
 class PIN_CHECKER:
     def __init__(self):
-
         #OCR, EXCEL path
         self.excel_path = 'C:/Users/wooyong.shin/Downloads/excel/'
         self.ocr_path = 'C:/Users/wooyong.shin/Downloads/ocr/'
@@ -28,9 +27,15 @@ class PIN_CHECKER:
         self.all_rev_list = []
         self.data_pre_processing(self.data_col_list,self.data_row_list, self.data,self.del_char,self.first_make_zero)
         self.number_of_cases = []
-        self.aa = 0
+        self.check_count = 0
         print(self.data)
-        self.check_pin_map(self.data_col_list,self.data_row_list,self.data, self.aa)
+        print("==================================PIN_MAP====================================")
+        self.check_pin_map(self.data_col_list, self.data_row_list, self.data, self.check_count)
+        print("==================================GUAGE=====================================")
+        self.check_count2 = 0
+        self.check_guage(self.data_col_list, self.data_row_list, self.data, self.check_count2)
+        print("==================================COUNTINT_PIN=====================================")
+        self.connecting_wiring(self.data_col_list, self.data_row_list, self.data, self.check_count2)
         # print("check")
         
 #file path + file name
@@ -57,17 +62,46 @@ class PIN_CHECKER:
                      if str(data[i][j]).find(k) == 0:
                          data[i][j] = 0      
    
-    def check_pin_map(self,data_col_list, data_row_list, data, aa):
-        for a in range(len(data_col_list)):
+    def check_pin_map(self,data_col_list, data_row_list, data, check_count):
+        for a in range(1,len(data_col_list),2):
             for b in range(len(data_row_list)):
                 if data[data_col_list[a]][data_row_list[b]] != 0:
                     point_char = data[data_col_list[a]][data_row_list[b]][0]
                     point_num = data[data_col_list[a]][data_row_list[b]][1:]
                     if data_col_list[a] + str(data_row_list[b]) == data[point_char][int(point_num)] :
-                        aa += 1
-                        print(str(aa) + " : " + data_col_list[a] + str(data_row_list[b])+" 일치")
+                        check_count += 1
+                        print(str(check_count) + " : " + data_col_list[a] + str(data_row_list[b])+" 일치")
                     if data_col_list[a] + str(data_row_list[b]) != data[point_char][int(point_num)] :
-                        aa += 1
-                        print(str(aa) + " : " + data_col_list[a] + str(data_row_list[b])  +" 불일치@@@@@@@@@@@@@@@@")
+                        check_count += 1
+                        print(str(check_count) + " : " + data_col_list[a] + str(data_row_list[b])  +" 불일치@@@@@@@@@@@@@@@@")
+            
+    def check_guage(self, data_col_list, data_row_list, data, check_count2):
+        for a in range(1,len(data_col_list),2):
+            for b in range(len(data_row_list)):
+                if data[data_col_list[a]][data_row_list[b]] != 0:
+                    point_char = data[data_col_list[a]][data_row_list[b]][0]
+                    point_low_char = point_char.lower()
+                    point_num = data[data_col_list[a]][data_row_list[b]][1:]
+                    if data[data_col_list[a-1]][data_row_list[b]] == data[point_low_char][int(point_num)] :
+                        check_count2 += 1
+                        print(str(check_count2) + " : " + data_col_list[a] + str(data_row_list[b])+" guage 일치")
+                    if data[data_col_list[a-1]][data_row_list[b]] != data[point_low_char][int(point_num)] :
+                        check_count2 += 1
+                        print(str(check_count2) + " : " + data_col_list[a] + str(data_row_list[b])  +" guage 불일치@@@@@@@@@@@@@@@@")
+                
+    def connecting_wiring(self,data_col_list, data_row_list, data, check_count):
+        for a in range(1,len(data_col_list),2):
+            for b in range(len(data_row_list)):
+                if data[data_col_list[a]][data_row_list[b]] != 0:
+                    point_char = data[data_col_list[a]][data_row_list[b]][0]
+                    point_num = data[data_col_list[a]][data_row_list[b]][1:]
+                    if data_col_list[a] + str(data_row_list[b]) == data[point_char][int(point_num)] :
+                        check_count += 1
+                        print(str(check_count) + " : " +data_col_list[a] + " ->" + data[data_col_list[a]][data_row_list[b]][0])
+                    if data_col_list[a] + str(data_row_list[b]) != data[point_char][int(point_num)] :
+                        check_count += 1
+                        print(str(check_count) + " : " + data_col_list[a] + str(data_row_list[b])  +" 불일치@@@@@@@@@@@@@@@@")
+                           
+
 
 PIN_CHECKER()
