@@ -6,6 +6,7 @@ Created on 2021. 4. 15.
 import pandas as pd
 import os
 from openpyxl import load_workbook
+import copy
 
 class PIN_CHECKER:
     def __init__(self):
@@ -46,24 +47,20 @@ class PIN_CHECKER:
         self.pin_count_list =[]        
         self.dic_pre_con = {}
         self.count_connecting_each_pin(self.set_pre_con, self.pre_con, self.pin_count)
-        print(self.pin_count_list)        
+        
+        print(self.pin_count_list)      
+        print("self.dic_pre_con")  
         print(self.dic_pre_con)
-        print(list(self.dic_pre_con.keys())[0][0])
-        print(list(self.dic_pre_con.keys())[0][3])
+        print("len(self.dic_pre_con)")
         print(len(self.dic_pre_con))
         self.dict_list = []
         self.dict_set = 0
         self.matching_num_list = []
-        self.match_col(self.dic_pre_con)
-        self.key_match = {}
-        print(self.dict_set)
-        
-    
-        
-        
-        
+        self.key_match = {}        
+        self.match_col(self.dic_pre_con)        
+        self.dup_dic_pre_con = copy.deepcopy(self.dic_pre_con)
+        self.delete_overlap_pin()
 
-        
 #file path + file name
     def readExel(self, xlse_path, sheetName):
         xls_file = pd.ExcelFile(xlse_path)
@@ -124,9 +121,7 @@ class PIN_CHECKER:
                     if data_col_list[a] + str(data_row_list[b]) == data[point_char][int(point_num)] :
                         check_count += 1
                         print(str(check_count) + " : " + data_col_list[a] + "->" + data[data_col_list[a]][data_row_list[b]][0] + "[" + str(data[data_col_list[a-1]][data_row_list[b]])+"]")                        
-                        self.pre_con.append(data_col_list[a] + "->" + data[data_col_list[a]][data_row_list[b]][0] + "[" + str(data[data_col_list[a-1]][data_row_list[b]])+"]")
-                                                
-                         
+                        self.pre_con.append(data_col_list[a] + "->" + data[data_col_list[a]][data_row_list[b]][0] + "[" + str(data[data_col_list[a-1]][data_row_list[b]])+"]")                         
                     if data_col_list[a] + str(data_row_list[b]) != data[point_char][int(point_num)] :
                         check_count += 1
                         print(str(check_count) + " : " + data_col_list[a] + str(data_row_list[b])  +" 불일치@@@@@@@@@@@@@@@@")
@@ -143,12 +138,18 @@ class PIN_CHECKER:
     def match_col(self, dic_pre_con):
         for i in range(len(dic_pre_con)):
             self.dict_list.append(list(self.dic_pre_con.keys())[i][0])
-            self.matching_num_list.append(i)
-        
+            self.matching_num_list.append(i)        
         self.dict_set = sorted(set(self.dict_list))
         self.key_match = dict(zip(self.dict_set, self.matching_num_list))
+        print("self.key_match")
         print(self.key_match)
-        
+    
+    def delete_overlap_pin(self):
+        for i in self.dup_dic_pre_con:
+            if self.key_match[i[0]] > self.key_match[i[3]]:
+                del self.dic_pre_con[i]
+        print(self.dic_pre_con)
+            
             
             
 PIN_CHECKER()
