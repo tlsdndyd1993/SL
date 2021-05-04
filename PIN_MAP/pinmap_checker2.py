@@ -11,9 +11,9 @@ import copy
 class PIN_CHECKER:
     def __init__(self):
         #OCR, EXCEL path
-        self.excel_path = 'C:/Users/wooyong.shin/Downloads/excel/'
+        self.excel_path = 'C:/Users/wooyong.shin/Desktop/'
         self.ocr_path = 'C:/Users/wooyong.shin/Downloads/ocr/'
-        self.excel_file_name = '1111.xlsx'
+        self.excel_file_name = 'pinmap.xlsx'
         self.export_path = 'C:/Users/wooyong.shin/Downloads/cis_excel/'        
         self.del_char = ":"
         self.first_make_zero = ["nan","SPL","-"]
@@ -59,7 +59,9 @@ class PIN_CHECKER:
         self.key_match = {}        
         self.match_col(self.dic_pre_con)        
         self.dup_dic_pre_con = copy.deepcopy(self.dic_pre_con)
+        self.wire_num = 0
         self.delete_overlap_pin()
+        
 
 #file path + file name
     def readExel(self, xlse_path, sheetName):
@@ -148,8 +150,16 @@ class PIN_CHECKER:
         for i in self.dup_dic_pre_con:
             if self.key_match[i[0]] > self.key_match[i[3]]:
                 del self.dic_pre_con[i]
+        print("==>pin map match<==")
         print(self.dic_pre_con)
+        
+        for j in self.dic_pre_con.values():
+            self.wire_num += j
+        print("=>" + str(self.wire_num) + "개 wire 필요")
             
             
-            
+    # def specify_wiring(self):
+    #
+    
+    
 PIN_CHECKER()
