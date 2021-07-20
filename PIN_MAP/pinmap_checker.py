@@ -11,9 +11,9 @@ import copy
 class PIN_CHECKER:
     def __init__(self):
         #OCR, EXCEL path
-        self.excel_path = 'C:/Users/wooyong.shin/Downloads/excel/'
+        self.excel_path = 'C:/Users/wooyong.shin/Desktop/'
         self.ocr_path = 'C:/Users/wooyong.shin/Downloads/ocr/'
-        self.excel_file_name = '1111.xlsx'
+        self.excel_file_name = 'pinmap.xlsx'
         self.export_path = 'C:/Users/wooyong.shin/Downloads/cis_excel/'        
         self.del_char = ":"
         self.first_make_zero = ["nan","SPL","-"]
@@ -46,8 +46,7 @@ class PIN_CHECKER:
         self.pin_count = 0
         self.pin_count_list =[]        
         self.dic_pre_con = {}
-        self.count_connecting_each_pin(self.set_pre_con, self.pre_con, self.pin_count)
-        
+        self.count_connecting_each_pin(self.set_pre_con, self.pre_con, self.pin_count)        
         print(self.pin_count_list)      
         print("self.dic_pre_con")  
         print(self.dic_pre_con)
@@ -59,7 +58,16 @@ class PIN_CHECKER:
         self.key_match = {}        
         self.match_col(self.dic_pre_con)        
         self.dup_dic_pre_con = copy.deepcopy(self.dic_pre_con)
+        self.wire_num = 0
         self.delete_overlap_pin()
+        self.wire_lenth = 0
+        self.wiring_type = []
+        self.wiring_lenth = []
+        self.specify_wiring_of_type()
+        self.specify_wiring_of_lenth()
+        self.print_cnt = 0
+        self.print_wiring_bom()
+        
 
 #file path + file name
     def readExel(self, xlse_path, sheetName):
@@ -148,8 +156,33 @@ class PIN_CHECKER:
         for i in self.dup_dic_pre_con:
             if self.key_match[i[0]] > self.key_match[i[3]]:
                 del self.dic_pre_con[i]
+        print("==>pin map match<==")
         print(self.dic_pre_con)
+        
+        for j in self.dic_pre_con.values():
+            self.wire_num += j
+        print("=>" + str(self.wire_num) + "개 wire 필요")
+        print(len(self.dic_pre_con))
             
-            
-            
+    def specify_wiring_of_type(self): 
+        self.wiring_type = list(map(str,input("WIRING TYPE : ").split()))
+        print(self.wiring_type)
+        if len(self.wiring_type) != len(self.dic_pre_con):
+            print("WIRING TYPE 을 다시 입력하세요.")
+            self.specify_wiring_of_type()
+    
+    def specify_wiring_of_lenth(self):       
+        self.wiring_lenth = list(map(str,input("WIRING LENTH : ").split()))
+        if len(self.wiring_lenth) != len(self.dic_pre_con):
+            self.specify_wiring_of_lenth()
+        print(self.wiring_lenth)
+        
+    def print_wiring_bom(self):
+        for i in range(len(self.dic_pre_con)):
+            for j in range(list(self.dic_pre_con.values())[i]):
+                # print(self.wiring_type[self.print_cnt] + " " + str(list(self.dic_pre_con.keys())[i][5:-1]) + "mm2" + str(self.wire_lenth[self.print_cnt]) + "mm")
+                print(self.wiring_type[self.print_cnt] + " " + str(list(self.dic_pre_con.keys())[i][5:-1]) + "mm2" + " " + self.wiring_lenth[self.print_cnt] + "mm")
+            self.print_cnt += 1 
+                
+    
 PIN_CHECKER()
