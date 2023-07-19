@@ -98,31 +98,52 @@ class PINMAP_CHECKER_REV0:
         self.marking_dict = self.make_marking_dict(self.marking)
         print("★★★★self.marking_dict★★★★")
         print(self.marking_dict)        
-        self.d_attribute_set_dict, self.c_d_attribute_set_dict = self.guage_list_by_marking(self.marking, self.data_rev04, self.column_rev02, self.row_rev02, self.marking_dict)
+        self.d_attribute_set_dict, self.c_d_attribute_set_dict, self.cc_d_attribute_set_dict, self.c_key, self.c_value = self.guage_list_by_marking(self.marking, self.data_rev04, self.column_rev02, self.row_rev02, self.marking_dict)
+        print("★★★★self.c_key★★★★")
+        print(self.c_key)
+        print("★★★★self.c_value★★★★")
+        print(self.c_value)
         print("★★★★self.d_attribute_set_dict★★★★")
         print(self.d_attribute_set_dict)
         print("★★★★self.c_d_attribute_set_dict★★★★")
         print(self.c_d_attribute_set_dict)
-
+        print("★★★★self.cc_d_attribute_set_dict★★★★")
+        print(self.cc_d_attribute_set_dict)  
         
         print("■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■   전선cis   ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■")
         print("■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■   전선cis   ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■")
         #와이어 결선 개수 프린트
-        self.all_wire_count_list = self.wire_list(self.c_d_attribute_set_dict, self.data_rev04, self.column_rev02, self.row_rev02, self.marking_dict, self.marking)
+        self.all_wire_count_list, self.all_wire_count_dict, self.all_connected_num_dict = self.wire_list(self.cc_d_attribute_set_dict, self.data_rev04, self.column_rev02, self.row_rev02, self.marking_dict, self.marking, self.c_key)
         print("★★★★self.all_wire_count_list★★★★")
         print(self.all_wire_count_list)
-        self.wiring_type = self.specify_wiring_of_type(self.c_d_attribute_set_dict)
+        print("★★★★self.all_wire_count_dict★★★★")
+        print(self.all_wire_count_dict)
+        print("★★★★self.all_connected_num_dict★★★★")
+        print(self.all_connected_num_dict)
+        self.wiring_type, self.all_type_dict = self.specify_wiring_type(self.cc_d_attribute_set_dict)
         print("★★★★self.wiring_type★★★★")
         print(self.wiring_type)
-        # self.print_wire_list(self.all_wire_count_list, self.c_d_attribute_set_dict)
+        print("★★★★self.all_type_dict★★★★")
+        print(self.all_type_dict)
+        self.wiring_length, self.all_length_dict = self.specify_wiring_length(self.cc_d_attribute_set_dict)
+        print("★★★★self.wiring_length★★★★")
+        print(self.wiring_length)
+        print("★★★★self.all_length_dict★★★★")
+        print(self.all_length_dict)
+        print(self.print_wire_list(self.all_type_dict, self.all_length_dict, self.all_wire_count_dict, self.cc_d_attribute_set_dict, self.all_connected_num_dict, self.c_key))
         
-        
-        print(len(self.data_rev04['A']))
-        print(len(self.data_rev04['B']))
-        print(len(self.data_rev04['C']))
+        print("■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■   SPLICE 입력   ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■")
+        print("■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■   SPLICE 입력   ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■")
+        #SPLICE 전선 입력
+        self.f_spl_length_list, self.f_sub_length_list, self.spl_main_gauge, self.m_m_spl_point, self.spl_sub_gauge, self.spl_dic_i_list = self.spl_wiring(self.cc_d_attribute_set_dict, self.all_length_dict, self.spl_dic, self.data_rev05, self.marking, self.column_rev02, self.row_rev02)
+        print("★★★★self.spl_sub_gauge★★★★")
+        print(self.spl_sub_gauge)
+        #SPLICE 전선 출력
+        self.print_splice(self.data_rev05,self.f_spl_length_list,self.f_sub_length_list,self.spl_set_list,self.spl_main_gauge,self.spl_dic, self.m_m_spl_point, self.spl_sub_gauge, self.spl_dic_i_list)
 
         
-
+        print("■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■   SPLICE 입력   ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■")
+        print("■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■   SPLICE 입력   ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■")
 ################################################################################################################################################################################################
 ################################################################################################################################################################################################
 ################################################################################################################################################################################################
@@ -224,22 +245,22 @@ class PINMAP_CHECKER_REV0:
                         print("▼▼▼▼▼▼▼▼▼▼▼▼  " + j + ":" + str(k) + '<-->' + matching_marking + ":" + matching_pin_num + '(O)'+ "  ▼▼▼▼▼▼▼▼▼▼▼▼")
                         #결선이 맞다는 전제에서 펑션,직경,색상이 맞는지 확인
                         if data_rev04[j+"_F"][int(k)]  == data_rev04[matching_marking+"_F"][int(matching_pin_num)]:
-                            print("-" + data_rev04[j+"_F"][int(k)] + " (O)" )
+                            print("-" + str(data_rev04[j+"_F"][int(k)]) + " (O)" )
                         else :
-                            print("펑션 불일치◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈◈")
+                            print("◈◈◈" + data_rev04[j+"_F"][int(k)] + "            " + data_rev04[matching_marking+"_F"][int(matching_pin_num)] + "◈◈◈")
                         if data_rev04[j+"_D"][int(k)]  == data_rev04[matching_marking+"_D"][int(matching_pin_num)]:
                             print("-" + str(data_rev04[j+"_D"][int(k)]) + " (O)") 
                         else : 
                             print("직경 불일치▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦▦")
                         if data_rev04[j+"_C"][int(k)]  == data_rev04[matching_marking+"_C"][int(matching_pin_num)]:
-                            print("-" + data_rev04[j+"_C"][int(k)] + " (O)")
+                            print("-" + str(data_rev04[j+"_C"][int(k)]) + " (O)")
                         else:
                             print("색상 불일치♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬♬")
                     else:
                         print(j + ":" + str(k) + '<-->' + matching_marking + ":" + matching_pin_num + '(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)') 
-                        print("펑션 확인 필요~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-                        print("직경 확인 필요~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-                        print("색상 확인 필요~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                        print("펑션 확인 필요~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                        print("직경 확인 필요~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                        print("색상 확인 필요~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         print()
     #SPL 딕셔너리 만들기
     def arrange_spl_data(self,marking,data_rev05,column_rev02,row_rev02,spl_list):
@@ -294,49 +315,272 @@ class PINMAP_CHECKER_REV0:
             for jj in ii:
                 if m_count > int(marking_dict[jj[0]]):
                     c_d_attribute_set_list[m_count-1].pop(m_l_count)
+                    m_l_count -= 1
                 m_l_count += 1
             m_l_count = 0
             m_count += 1
-        m_count = 0            
+        m_count = 0
+        
         #결선 dictionary
         d_attribute_set_dict = dict(zip(marking,d_attribute_set_list))
         c_d_attribute_set_dict = dict(zip(marking,c_d_attribute_set_list))
+        
+        #중복딘 결선 마킹 없애기
+        c_key = []
+        c_value = []
+        for a in c_d_attribute_set_dict:
+            if len(c_d_attribute_set_dict[a]) != 0:
+                c_key.append(a)
+                c_value.append(c_d_attribute_set_dict[a])
+        cc_d_attribute_set_dict = dict(zip(c_key,c_value))
+
         print(list(data_rev04['A']))
-        return d_attribute_set_dict, c_d_attribute_set_dict
+        return d_attribute_set_dict, c_d_attribute_set_dict, cc_d_attribute_set_dict, c_key, c_value
+
+    
     #와이어 결선 개수 프린트
-    def wire_list(self,c_d_attribute_set_dict,data_rev04,column_rev02,row_rev02,marking_dict,marking):
+    def wire_list(self,cc_d_attribute_set_dict,data_rev04,column_rev02,row_rev02,marking_dict,marking,c_key):
         wire_count = 0
         wire_count_list = []
+        nan_zero_marking_list = []
         all_wire_count_list = []        
-        for i in marking:
-            for j in c_d_attribute_set_dict[i]:
+        for i in c_key:
+            for j in cc_d_attribute_set_dict[i]:
                 for k in range(len(data_rev04[i])):
-                    #c_d_attribute_set_dict 요소와 같으면 +1 을 해라
+                    #cc_d_attribute_set_dict 요소와 같으면 +1 을 해라
                     if j == data_rev04[i][k+1][0] + ":" + str(data_rev04[i+"_D"][k+1]):
                         wire_count += 1
-                wire_count_list.append(wire_count)
-                wire_count = 0
+                wire_count_list.append(wire_count)        
+                wire_count = 0            
             all_wire_count_list.append(wire_count_list)
             wire_count_list = []
-        return all_wire_count_list
+        all_wire_count_dict = dict(zip(c_key,all_wire_count_list))
+        
+        connected_num_list = []
+        for ii in c_key:
+            connected_num_list.append(len(all_wire_count_dict[ii]))
+        all_connected_num_dict = dict(zip(c_key,connected_num_list))           
+        
+        return all_wire_count_list, all_wire_count_dict, all_connected_num_dict
     #와이어링 재질 리스트 입력
-    def specify_wiring_of_type(self,c_d_attribute_set_dict): 
-        wiring_type = list(map(str,input("WIRING TYPE : ").upper().split()))
+    #wire_type_num : 현재 서로 어떻게 연결되어있는지는 다 아는 상태 / wiring_type : 연결된 핀들의 전선 재질이 어떻게 되는지 데이터 입력
+    def specify_wiring_type(self,cc_d_attribute_set_dict): 
+        wire_type_num = 0
+        for i in cc_d_attribute_set_dict.keys():
+            for j in cc_d_attribute_set_dict[i]:
+                wire_type_num += 1
+        wiring_type = list(map(str,input(str(wire_type_num) + "개의 WIRING TYPE : ").upper().split()))  
         print(wiring_type)
-        if len(wiring_type) != len(c_d_attribute_set_dict):
-            print("WIRING TYPE 을 다시 입력하세요.")
-            self.specify_wiring_of_type()
-        return wiring_type
-
-    # def print_wire_list(self,all_wire_count_list,c_d_attribute_set_dict):
-        # wiring_type = list(map(str,input("WIRING TYPE : ").split()))
-        # for i in range(len(c_d_attribute_set_dict.values())):
-            # for j in range(len(i)):
-                # for k in range(j):
-                    # print()
                 
-PINMAP_CHECKER_REV0()
+        if len(wiring_type) != wire_type_num:     
+            wiring_type=[]
+            wire_type_num = 0       
+            print("WIRING TYPE 을 다시 입력하세요.")            
+            wiring_type, all_type_dict = self.specify_wiring_type(cc_d_attribute_set_dict)
+            return wiring_type, all_type_dict
+        
+        #wiring_type 리스트를 마킹 dict로 만들기
+        type_dict_num = 0
+        type_list = []
+        all_type_list = []
+        for ii in cc_d_attribute_set_dict.keys():
+            for jj in range(len(cc_d_attribute_set_dict[ii])):
+                type_list.append(wiring_type[type_dict_num])
+                type_dict_num +=1
+            all_type_list.append(type_list)
+            type_list = []
+        all_type_dict = dict(zip(list(cc_d_attribute_set_dict.keys()),all_type_list))
+        return wiring_type, all_type_dict
+    #와이어링 길이 입력
+    def specify_wiring_length(self,cc_d_attribute_set_dict):
+        wire_length_num = 0
+        for i in cc_d_attribute_set_dict.keys():
+            for j in cc_d_attribute_set_dict[i]:
+                wire_length_num += 1
+        wiring_length = list(map(str,input(str(wire_length_num) + "개의 WIRING length : ").upper().split()))
+        print(wiring_length)
+        if len(wiring_length) != wire_length_num:
+            wiring_length = []
+            print("WIRING length 을 다시 입력하세요.")            
+            wiring_length, all_length_dict = self.specify_wiring_length(self.cc_d_attribute_set_dict)
+            return wiring_length, all_length_dict
+        
+        length_dict_num = 0
+        length_list = []
+        all_length_list = []
+        for ii in cc_d_attribute_set_dict.keys():
+            for jj in range(len(cc_d_attribute_set_dict[ii])):
+                length_list.append(wiring_length[length_dict_num])
+                length_dict_num += 1
+            all_length_list.append(length_list)
+            length_list = []
+        all_length_dict = dict(zip(list(cc_d_attribute_set_dict.keys()),all_length_list))
+        
+        return wiring_length, all_length_dict
+    #와이어링 출력
+    def print_wire_list(self,all_type_dict, all_length_dict, all_wire_count_dict, cc_d_attribute_set_dict, all_connected_num_dict, c_key):
+        for i in c_key:
+            for j in range(all_connected_num_dict[i]):
+                for k in range(all_wire_count_dict[i][j]):
+                    if k==0 :
+                        print(all_type_dict[i][j] + " " + cc_d_attribute_set_dict[i][j][2:] + "SQ BLACK/" + all_length_dict[i][j] + "/mm/" + i + "->" + cc_d_attribute_set_dict[i][j])
+                    else:
+                        print(all_type_dict[i][j] + " " + cc_d_attribute_set_dict[i][j][2:] + "SQ BLACK/" + all_length_dict[i][j] + "/mm")
 
+    def spl_wiring(self,cc_d_attribute_set_dict, all_length_dict, spl_dic, data_rev05, marking, column_rev02, row_rev02):
+        spl_main_dic = {}
+        spl_main = []
+        spl_length_dict = {}
+        spl_length_list = []
+        f_spl_length_list = []
+        sub_length_list = []
+        f_sub_length_list = []
+        spl_main_gauge = []
+        m_m_spl_point = []
+        spl_sub_gauge = []
+        spl_dic_i_list = []
+
+        #splice 주선/지선 dict
+        s_main_dict = {}
+        s_sub_dict = {}
+        for i in range(len(spl_dic)):
+            spl_dic_i = copy.deepcopy(spl_dic[list(spl_dic.keys())[i]])
+            print(list(spl_dic.keys())[i] + " : " + str(spl_dic_i) +  "의 주선은 무엇인가요?")
+            #주선 선택
+            a, b = map(int,input().split())
+            spl_main.append(a)
+            spl_main.append(b)
+            spl_main = sorted(spl_main)
+            #주선 핀맵
+            spl_main_1 = list(spl_dic.values())[i][spl_main[0]-1]
+            spl_main_2 = list(spl_dic.values())[i][spl_main[1]-1]
+            #spl리스트에 연결된 주선 요소 삭제시키기
+            spl_main_list = []
+            spl_main_list.append(spl_main_1)
+            spl_main_list.append(spl_main_2)            
+            for m in spl_main_list:
+                if str(spl_dic_i).find(m) != -1:
+                    spl_dic_i.remove(m)
+            # print(str(spl_dic_i))            
+            #주선 핀맵 마킹
+            spl_main_1_m = list(spl_dic.values())[i][spl_main[0]-1][0:spl_main_1.find(":")]
+            spl_main_2_m = list(spl_dic.values())[i][spl_main[1]-1][0:spl_main_2.find(":")] 
+            print(list(spl_dic.keys())[i] + "의 주선은 " + spl_main_1 + " 과 " + spl_main_2 + " 입니다.")
+            
+            
+            #주선의 gauge가 서로 일치한지 확인 후 append(23/01/11)
+            m_m_s_spl_point = []            
+            spl_main_s_gauge = []
+            # print(spl_main_1_m)
+            # print(spl_main_1[spl_main_1.find(":")+1:])
+            spl_gauge_1 = data_rev05[spl_main_1_m + "_D"][int(spl_main_1[spl_main_1.find(":")+1:])]
+            spl_gauge_2 = data_rev05[spl_main_2_m + "_D"][int(spl_main_2[spl_main_2.find(":")+1:])]
+            if spl_gauge_1 == spl_gauge_2:
+                spl_main_s_gauge.append(spl_gauge_1)
+                spl_main_gauge.append(spl_main_s_gauge)
+            else:
+                spl_main_gauge.append(input("주선의 gauge가 다릅니다. gauge를 입력하세요 : "))
+            print("★★★★self.spl_main_gauge★★★★")
+            print(spl_main_gauge)                        
+            m_m_s_spl_point.append(spl_main_1 + "->" + spl_main_2)
+            m_m_spl_point.append(m_m_s_spl_point)                   
+            
+            #SPL 주선 길이를 뽑아낼 수 있는지 확인
+            #연결된 선에 주선의 마킹이 있는지 확인->주선이 이미 연결되어있는지 확인. 맞다면 bool_num_spl 에 1 더하기
+            bool_main_num_spl = 0
+            for n_k in list(all_length_dict.keys()):
+                if spl_main_1_m == n_k:
+                    bool_main_num_spl += 1
+            bool_num_spl = 0
+            if bool_main_num_spl == 1:
+                for j in list(cc_d_attribute_set_dict[spl_main_1_m]):
+                    if spl_main_2_m == j[0:j.find(":")]:
+                        bool_num_spl += 1
+            #이미 연결된 주선이 있다면       
+            if bool_num_spl == 1:
+                print("이미 연결된 주선이 있습니다.")                
+                index_spl_m_2 = 0
+                # print(spl_main_1_m)
+                # print(cc_d_attribute_set_dict[spl_main_1_m])
+                #주선중 하나에 해당하는 핀이 몇 번째 인덱스에 위치해있는지 확인
+                for k in cc_d_attribute_set_dict[spl_main_1_m]:
+                    if k[0:k.find(":")] == spl_main_2_m:
+                        break
+                    else:
+                        #위치 인덱스
+                        index_spl_m_2 += 1
+                # if cc_d_attribute_set_dict[spl_main_1_m][a]
+                spl_main_length = all_length_dict[spl_main_1_m][index_spl_m_2]
+                print("주선의 길이는 " + str(spl_main_length) + " 입니다.")
+                spl_length_list.append(str(spl_main_length))                               
+                f_spl_length_list.append(spl_length_list)
+                spl_length_list = []
+                print("★★★★self.f_spl_length_list★★★★")
+                print(f_spl_length_list)
+                
+            #연결된 주선이 없다면
+            else:
+                print("XXXXXXXXXXXXXXXXXXXXX연결된 주선이 없습니다.XXXXXXXXXXXXXXXXXXXXX")
+                spl_main_length = str(input(spl_main_1 + " 과 " + spl_main_2 +" 의 주선 길이를 입력해주세요."))
+                spl_length_list.append(str(spl_main_length))
+                f_spl_length_list.append(spl_length_list)
+                spl_length_list = []
+                print("★★★★self.f_spl_length_list★★★★")
+                print(f_spl_length_list)
+            # print(all_length_dict[spl_main_1_m][index_spl_m_2])
+            #spl_dic_i 는 주선을 제외한 요소
+            print("남은 지선은 " + str(spl_dic_i) + "입니다.")
+
+            
+            #주선이 remove 된 splice 요소들 (지선만 남은 spl_dic_i) 를 dictionary 화 시키기 (23.01.12)
+            print("★★★★spl_dic_i★★★★")
+            print(spl_dic_i)            
+            spl_dic_i_list.append(spl_dic_i)
+            spl_sub_s_gauge = []
+            for ll in spl_dic_i:
+                sub_length = str(input("지선 " + str(ll) + " 의 길이는 얼마인가요?"))
+                sub_length_list.append(sub_length) 
+                
+            #지선 gauge 에 대한 list 만들기(23.01.11)
+                spl_sub_s_gauge.append(data_rev05[str(ll)[0:str(ll).find(":")] + "_D"][int(str(ll)[str(ll).find(":")+1:])])
+            spl_sub_gauge.append(spl_sub_s_gauge)
+            print("★★★★self.spl_sub_gauge★★★★")
+            print(spl_sub_gauge)
+                           
+            f_sub_length_list.append(sub_length_list)
+            print("★★★★self.f_sub_length_list★★★★")
+            print(f_sub_length_list)
+            sub_length_list = []
+            
+            bool_num_spl = 0
+            bool_main_num_spl = 0
+            index_spl_m_2 = 0
+            spl_main = []
+            spl_length_list = []
+            
+        return f_spl_length_list, f_sub_length_list, spl_main_gauge, m_m_spl_point,spl_sub_gauge,spl_dic_i_list
+    
+    def print_splice(self,data_rev05,f_spl_length_list,f_sub_length_list,spl_set_list,spl_main_gauge,spl_dic,m_m_spl_point,spl_sub_gauge,spl_dic_i_list):
+        material = str(input("전선 재질을 입력하세요 : ")).upper()
+        f_spl_length_dict = dict(zip(spl_set_list,f_spl_length_list))
+        f_sub_length_dict = dict(zip(spl_set_list,f_sub_length_list))
+        spl_main_gauge_dict = dict(zip(spl_set_list,spl_main_gauge))
+        m_m_spl_point_dict = dict(zip(spl_set_list,m_m_spl_point))
+        spl_sub_gauge_dict = dict(zip(spl_set_list,spl_sub_gauge))
+        spl_dic_i_list_dict = dict(zip(spl_set_list,spl_dic_i_list))
+        print(f_spl_length_dict)
+        print(f_sub_length_dict)
+        print(spl_main_gauge_dict)
+        print(m_m_spl_point_dict)
+        print(spl_sub_gauge_dict)
+        print(spl_dic_i_list_dict)
+        for i in spl_set_list:
+            print(material + " " + str(spl_main_gauge_dict[i][0]) + "SQ BLACK/" + f_spl_length_dict[i][0] + "/mm/" + m_m_spl_point_dict[i][0] + "/" +i +"(주선)")
+            for j in range(len(f_sub_length_dict[i])):
+                print(material + " " + str(spl_sub_gauge_dict[i][j]) + "SQ BLACK/" + f_sub_length_dict[i][j] + "/mm/" + i + "->" + spl_dic_i_list_dict[i][j] + "(지선)")
+                
+        
+PINMAP_CHECKER_REV0()
 
 
 # data_rev03_1 = data_rev03.copy(deep=True)                                #pandas deep copy

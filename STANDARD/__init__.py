@@ -1,2 +1,2 @@
-a='tlsdndyd'
-print(a[0:1])
+a = 3.5
+print(int(a))
