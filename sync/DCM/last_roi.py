@@ -18,9 +18,17 @@ class ScreenCameraRecorder:
         self.camera_queue = queue.Queue(maxsize=10)
         self.screen_writer = None
         self.camera_writer = None
-        self.target_fps = 30.0
         
-        # ROI 설정을 위한 변수 (각각 최대 10개)
+        # 동적 FPS 설정
+        self.target_fps = 30.0  # 기본값
+        self.actual_camera_fps = 30.0  # 실제 카메라 FPS
+        self.actual_screen_fps = 30.0  # 실제 화면 캡처 FPS
+        
+        # 30분 단위 녹화 분할
+        self.segment_duration = 30 * 60  # 30분 (초 단위)
+        self.current_segment_start = None
+        
+        # ROI 설정
         self.screen_rois = []
         self.camera_rois = []
         self.temp_points = {"screen": [], "camera": []}
@@ -37,28 +45,76 @@ class ScreenCameraRecorder:
         self.screen_prev_avg = np.array([0.0, 0.0, 0.0])
         self.camera_prev_avg = np.array([0.0, 0.0, 0.0])
         
-        # 깜빡임 감지 임계값 (밝기 변화량)
-        self.flicker_threshold = 30.0
+        # ROI별 이전 값 (동시성 감지용)
+        self.screen_roi_prev = []
+        self.camera_roi_prev = []
         
-        # 깜빡임 감지 이벤트 로그 (최근 50개)
-        self.screen_flicker_events = []
-        self.camera_flicker_events = []
+        # 깜빡임 감지 임계값
+        self.brightness_threshold = 30.0  # 밝기 변화량
+        self.std_threshold = 15.0  # 표준편차 임계값 (블랙아웃은 낮음)
+        self.simultaneity_threshold = 0.1  # 동시성 임계값 (초 단위)
         
-        # 영상 버퍼 (전후 10초 저장용, 30fps 기준)
+        # Blackout 감지 이벤트 로그
+        self.screen_blackout_events = []
+        self.camera_blackout_events = []
+        
+        # Blackout 카운트
+        self.screen_blackout_count = 0
+        self.camera_blackout_count = 0
+        
+        # 영상 버퍼 (동적 크기)
         self.screen_buffer = []
         self.camera_buffer = []
-        self.buffer_max_size = 900  # 30초 분량 (여유 있게)
+        self.buffer_seconds = 30  # 30초 분량
         
         # Blackout 감지 쿨다운 (5초)
         self.screen_last_blackout_time = 0
         self.camera_last_blackout_time = 0
-        self.blackout_cooldown = 5.0  # 5초
+        self.blackout_cooldown = 5.0
+        
+        # Blackout 녹화 활성화 스위치
+        self.blackout_recording_enabled = True
         
         # UI 컨트롤
         self.ui_lock = threading.Lock()
 
+    @property
+    def screen_buffer_max_size(self):
+        """동적 버퍼 크기 계산 (FPS 기반)"""
+        return int(self.actual_screen_fps * self.buffer_seconds)
+    
+    @property
+    def camera_buffer_max_size(self):
+        """동적 버퍼 크기 계산 (FPS 기반)"""
+        return int(self.actual_camera_fps * self.buffer_seconds)
+
+    def detect_camera_fps(self):
+        """카메라 실제 FPS 감지"""
+        cap = cv2.VideoCapture(1)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(0)
+        
+        # 카메라 FPS 읽기
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps > 0:
+            self.actual_camera_fps = fps
+        else:
+            # FPS를 읽을 수 없으면 측정
+            num_frames = 30
+            start = time.time()
+            for _ in range(num_frames):
+                ret, _ = cap.read()
+                if not ret:
+                    break
+            elapsed = time.time() - start
+            if elapsed > 0:
+                self.actual_camera_fps = num_frames / elapsed
+        
+        cap.release()
+        print(f"Camera FPS detected: {self.actual_camera_fps:.2f}")
+
     def on_mouse(self, event, x, y, flags, param):
-        """마우스 클릭으로 ROI 영역 설정 (param: "screen" 또는 "camera")"""
+        """마우스 클릭으로 ROI 영역 설정"""
         source = param
         rois = self.screen_rois if source == "screen" else self.camera_rois
         points = self.temp_points[source]
@@ -73,41 +129,49 @@ class ScreenCameraRecorder:
                     rois.append(rect)
                 points.clear()
         elif event == cv2.EVENT_RBUTTONDOWN:
-            if rois: rois.pop() # 우클릭 시 마지막 ROI 삭제
+            if rois: 
+                rois.pop()
 
-    def save_blackout_clip(self, source="screen", timestamp=None):
-        """깜빡임 발생 시 전후 10초 영상 클립 저장 (총 20초)"""
+    def save_blackout_clip(self, source="screen", timestamp=None, blackout_frame_idx=None):
+        """Blackout 발생 시 전후 10초 영상 클립 저장 (총 20초)"""
+        if not self.blackout_recording_enabled:
+            print(f"[Blackout] {source} - Recording disabled, skipping save")
+            return
+        
         desktop = os.path.expanduser("~/Desktop")
-        blackout_dir = os.path.join(desktop, "BLACK_OUT")
-        os.makedirs(blackout_dir, exist_ok=True)
+        blackout_base_dir = os.path.join(desktop, "BLACK_OUT")
+        
+        # 소스별 독립 폴더
+        source_dir = os.path.join(blackout_base_dir, source.upper())
+        os.makedirs(source_dir, exist_ok=True)
         
         if timestamp is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         
-        # 버퍼에서 영상 클립 생성
         buffer = self.screen_buffer if source == "screen" else self.camera_buffer
+        fps = self.actual_screen_fps if source == "screen" else self.actual_camera_fps
         
         if len(buffer) == 0:
             return
         
-        # 현재 시점(blackout 발생 시점)을 기준으로 전 10초, 후 10초 (30fps 기준 각 300프레임)
-        frames_before = 300  # 10초 전
-        frames_after = 300   # 10초 후
+        # 전 10초, 후 10초 (FPS 기반)
+        frames_before = int(fps * 10)
+        frames_after = int(fps * 10)
         
         current_idx = len(buffer) - 1
         start_idx = max(0, current_idx - frames_before)
         
-        # 먼저 blackout 발생 시점까지의 프레임 가져오기
+        # Blackout 발생 시점까지의 프레임
         clip_frames = list(buffer[start_idx:current_idx + 1])
+        blackout_event_time = datetime.now()
         
-        print(f"[Blackout] {source} - Capturing frames from buffer...")
-        print(f"  Buffer size: {len(buffer)}, Current idx: {current_idx}")
-        print(f"  Frames before blackout: {len(clip_frames)}")
+        print(f"[Blackout] {source} - Capturing frames...")
+        print(f"  Buffer: {len(buffer)}, Before frames: {len(clip_frames)}")
         
-        # 이후 10초 동안 추가 프레임 수집 (비동기로 대기)
+        # 이후 10초 동안 프레임 수집
         start_wait = time.time()
-        while len(clip_frames) < frames_before + frames_after and (time.time() - start_wait) < 11:
-            time.sleep(0.1)
+        while len(clip_frames) - frames_before < frames_after and (time.time() - start_wait) < 11:
+            time.sleep(0.05)
             current_buffer = self.screen_buffer if source == "screen" else self.camera_buffer
             if len(current_buffer) > current_idx:
                 new_frames = list(current_buffer[current_idx + 1:])
@@ -117,103 +181,143 @@ class ScreenCameraRecorder:
                 if len(clip_frames) >= frames_before + frames_after:
                     break
         
-        # 최종적으로 수집된 프레임만 저장
         final_frames = clip_frames[:frames_before + frames_after]
         
-        print(f"  Total frames collected: {len(final_frames)} (target: {frames_before + frames_after})")
+        print(f"  Total frames: {len(final_frames)} (target: {frames_before + frames_after})")
         
         if len(final_frames) == 0:
-            print(f"  ERROR: No frames to save!")
+            print(f"  ERROR: No frames!")
             return
         
-        # 영상 저장
+        # Blackout 시점 텍스트
+        blackout_time_str = blackout_event_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        
+        # 영상 저장 (왼쪽 상단에 시간 표시)
         h, w = final_frames[0].shape[:2]
-        video_path = os.path.join(blackout_dir, f"{source}_blackout_{timestamp}.mp4")
+        video_path = os.path.join(source_dir, f"blackout_{timestamp}.mp4")
         writer = cv2.VideoWriter(
             video_path,
             cv2.VideoWriter_fourcc(*'mp4v'),
-            self.target_fps,
+            fps,
             (w, h)
         )
         
-        for frame in final_frames:
-            writer.write(frame)
+        for i, frame in enumerate(final_frames):
+            frame_copy = frame.copy()
+            # Blackout 시점 표시
+            cv2.putText(frame_copy, f"BLACKOUT: {blackout_time_str}", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            # 프레임 번호 (디버깅용)
+            relative_time = (i - frames_before) / fps
+            cv2.putText(frame_copy, f"T: {relative_time:+.1f}s", (10, 60), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            writer.write(frame_copy)
         
         writer.release()
         
-        # 깜빡임 발생 시점 프레임 캡처 저장 (전 10초의 마지막 프레임)
+        # Blackout 발생 시점 프레임 캡처
         capture_idx = min(frames_before, len(final_frames) - 1)
-        capture_frame = final_frames[capture_idx]
-        capture_path = os.path.join(blackout_dir, f"{source}_capture_{timestamp}.jpg")
+        capture_frame = final_frames[capture_idx].copy()
+        
+        # 캡처 이미지에도 시간 표시
+        cv2.putText(capture_frame, f"BLACKOUT: {blackout_time_str}", (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        
+        capture_path = os.path.join(source_dir, f"capture_{timestamp}.jpg")
         cv2.imwrite(capture_path, capture_frame)
         
-        duration = len(final_frames) / self.target_fps
-        print(f"  BLACK_OUT saved: {video_path} ({duration:.1f}s, {len(final_frames)} frames)")
-        print(f"  Capture saved: {capture_path}")
+        duration = len(final_frames) / fps
+        print(f"  Saved: {video_path} ({duration:.1f}s)")
+        print(f"  Capture: {capture_path}")
 
-    def detect_flicker(self, current_avg, prev_avg, source="screen"):
-        """깜빡임 감지 - 어두워지는 경우만 감지 (화면 꺼짐)"""
-        if prev_avg is None or np.all(prev_avg == 0):
+    def detect_blackout(self, current_avg_list, prev_avg_list, source="screen"):
+        """
+        단순 Blackout 감지 - 밝기 감소만 체크
+        """
+        if len(current_avg_list) == 0 or len(prev_avg_list) == 0:
             return False
         
-        # 밝기 계산 (0.299*R + 0.587*G + 0.114*B)
-        current_brightness = 0.114 * current_avg[0] + 0.587 * current_avg[1] + 0.299 * current_avg[2]
-        prev_brightness = 0.114 * prev_avg[0] + 0.587 * prev_avg[1] + 0.299 * prev_avg[2]
+        if len(current_avg_list) != len(prev_avg_list):
+            return False
         
-        brightness_change = prev_brightness - current_brightness  # 어두워지는 경우 양수
+        # 각 ROI의 밝기 변화 계산
+        brightness_changes = []
+        current_brightnesses = []
         
-        # 어두워지는 경우만 감지 (임계값 이상 감소)
-        if brightness_change > self.flicker_threshold:
-            current_time = time.time()
+        for curr, prev in zip(current_avg_list, prev_avg_list):
+            if np.all(prev == 0):
+                continue
             
-            # 쿨다운 체크 (마지막 blackout 이후 5초 경과 확인)
-            last_blackout_time = self.screen_last_blackout_time if source == "screen" else self.camera_last_blackout_time
+            curr_brightness = 0.114 * curr[0] + 0.587 * curr[1] + 0.299 * curr[2]
+            prev_brightness = 0.114 * prev[0] + 0.587 * prev[1] + 0.299 * prev[2]
             
-            if current_time - last_blackout_time < self.blackout_cooldown:
-                # 쿨다운 중이므로 로그만 남기고 저장하지 않음
-                print(f"[Blackout] {source} - Cooldown active (skipping save, {self.blackout_cooldown - (current_time - last_blackout_time):.1f}s remaining)")
-                return False
-            
-            # 쿨다운 타이머 업데이트
-            if source == "screen":
-                self.screen_last_blackout_time = current_time
-            else:
-                self.camera_last_blackout_time = current_time
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-            event_log = {
-                'time': datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                'brightness_change': brightness_change,
-                'current': current_brightness,
-                'prev': prev_brightness
-            }
-            
-            if source == "screen":
-                self.screen_flicker_events.append(event_log)
-                if len(self.screen_flicker_events) > 50:  # 최대 50개 저장
-                    self.screen_flicker_events.pop(0)
-            else:
-                self.camera_flicker_events.append(event_log)
-                if len(self.camera_flicker_events) > 50:  # 최대 50개 저장
-                    self.camera_flicker_events.pop(0)
-            
-            # BLACK_OUT 클립 저장 (별도 스레드에서 실행)
-            print(f"[Blackout] {source} - Detected! Starting clip save...")
-            threading.Thread(target=self.save_blackout_clip, args=(source, timestamp), daemon=True).start()
-            
-            return True
+            brightness_change = prev_brightness - curr_brightness  # 어두워지는 경우 양수
+            brightness_changes.append(brightness_change)
+            current_brightnesses.append(curr_brightness)
         
-        return False
+        if len(brightness_changes) == 0:
+            return False
+        
+        mean_brightness_change = np.mean(brightness_changes)
+        
+        # 조건: 평균 밝기 감소가 임계값 이상
+        if mean_brightness_change < self.brightness_threshold:
+            return False
+        
+        current_time = time.time()
+        
+        # 쿨다운 체크
+        last_blackout_time = self.screen_last_blackout_time if source == "screen" else self.camera_last_blackout_time
+        
+        if current_time - last_blackout_time < self.blackout_cooldown:
+            remaining = self.blackout_cooldown - (current_time - last_blackout_time)
+            print(f"[Blackout] {source} - Cooldown ({remaining:.1f}s remaining)")
+            return False
+        
+        # Blackout 감지 성공!
+        if source == "screen":
+            self.screen_last_blackout_time = current_time
+            self.screen_blackout_count += 1
+        else:
+            self.camera_last_blackout_time = current_time
+            self.camera_blackout_count += 1
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        
+        current_std = np.std(current_brightnesses)
+        change_std = np.std(brightness_changes)
+        
+        event_log = {
+            'time': datetime.now().strftime("%H:%M:%S.%f")[:-3],
+            'brightness_change': mean_brightness_change,
+            'brightness_std': current_std,
+            'change_std': change_std
+        }
+        
+        if source == "screen":
+            self.screen_blackout_events.append(event_log)
+            if len(self.screen_blackout_events) > 50:
+                self.screen_blackout_events.pop(0)
+        else:
+            self.camera_blackout_events.append(event_log)
+            if len(self.camera_blackout_events) > 50:
+                self.camera_blackout_events.pop(0)
+        
+        print(f"[Blackout] {source} - DETECTED!")
+        print(f"  Brightness decrease: {mean_brightness_change:.1f}")
+        
+        threading.Thread(target=self.save_blackout_clip, args=(source, timestamp), daemon=True).start()
+        
+        return True
 
     def calculate_roi_average(self, frame, rois):
         """ROI 영역의 평균 픽셀 값 계산 (BGR)"""
         averages = []
         for (rx, ry, rw, rh) in rois:
-            # ROI 영역이 프레임 범위 내에 있는지 확인
             if rw > 0 and rh > 0:
                 roi_region = frame[ry:ry+rh, rx:rx+rw]
                 if roi_region.size > 0:
-                    avg_color = roi_region.mean(axis=0).mean(axis=0)  # (B, G, R)
+                    avg_color = roi_region.mean(axis=0).mean(axis=0)
                     averages.append(avg_color)
                 else:
                     averages.append(np.array([0, 0, 0]))
@@ -225,15 +329,10 @@ class ScreenCameraRecorder:
         """BGR 값을 기반으로 색상 이름 추정"""
         b, g, r = bgr
         
-        # 어두운 색상 (거의 검정)
         if max(r, g, b) < 50:
             return "Black"
-        
-        # 밝은 색상 (거의 흰색)
         if min(r, g, b) > 200:
             return "White"
-        
-        # 주요 색상 판단
         if r > g * 1.5 and r > b * 1.5:
             return "Red"
         elif g > r * 1.5 and g > b * 1.5:
@@ -251,17 +350,16 @@ class ScreenCameraRecorder:
 
     def create_control_ui(self):
         """컨트롤 UI 이미지 생성"""
-        # 동적 높이 계산
-        base_height = 250  # 헤더 + 단축키 영역
-        screen_roi_height = min(len(self.screen_roi_avg), 8) * 20 + 50  # ROI당 20px
-        screen_flicker_height = min(len(self.screen_flicker_events), 10) * 16 + 40  # 이벤트당 16px
+        base_height = 300
+        screen_roi_height = min(len(self.screen_roi_avg), 8) * 20 + 50
+        screen_event_height = min(len(self.screen_blackout_events), 10) * 16 + 40
         camera_roi_height = min(len(self.camera_roi_avg), 8) * 20 + 50
-        camera_flicker_height = min(len(self.camera_flicker_events), 10) * 16 + 40
+        camera_event_height = min(len(self.camera_blackout_events), 10) * 16 + 40
         
-        ui_height = base_height + screen_roi_height + screen_flicker_height + camera_roi_height + camera_flicker_height
-        ui_height = max(600, min(ui_height, 1200))  # 최소 600, 최대 1200
+        ui_height = base_height + screen_roi_height + screen_event_height + camera_roi_height + camera_event_height
+        ui_height = max(650, min(ui_height, 1200))
         
-        ui_width = 650
+        ui_width = 700
         ui_frame = np.ones((ui_height, ui_width, 3), dtype=np.uint8) * 240
         
         y_offset = 20
@@ -269,14 +367,26 @@ class ScreenCameraRecorder:
         # 제목
         cv2.putText(ui_frame, "Recording Control Panel", (10, y_offset), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
-        y_offset += 40
+        y_offset += 35
         
         # 녹화 상태
         status_text = "Recording: ON" if self.recording else "Recording: OFF"
         status_color = (0, 200, 0) if self.recording else (0, 0, 200)
         cv2.putText(ui_frame, status_text, (10, y_offset), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
-        y_offset += 35
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, status_color, 2)
+        
+        # Blackout 녹화 활성화 상태
+        blackout_status = "ON" if self.blackout_recording_enabled else "OFF"
+        blackout_color = (0, 150, 0) if self.blackout_recording_enabled else (150, 0, 0)
+        cv2.putText(ui_frame, f"Blackout Rec: {blackout_status}", (300, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, blackout_color, 2)
+        y_offset += 30
+        
+        # FPS 정보
+        fps_text = f"Screen: {self.actual_screen_fps:.1f}fps  Camera: {self.actual_camera_fps:.1f}fps"
+        cv2.putText(ui_frame, fps_text, (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (80, 80, 80), 1)
+        y_offset += 25
         
         # 녹화 시간
         if self.recording and self.start_time:
@@ -285,180 +395,155 @@ class ScreenCameraRecorder:
             hours, minutes = divmod(minutes, 60)
             timer_str = f"Duration: {hours:02d}:{minutes:02d}:{seconds:02d}"
             cv2.putText(ui_frame, timer_str, (10, y_offset), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
-        y_offset += 35
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1)
+        y_offset += 30
         
         # 구분선
         cv2.line(ui_frame, (10, y_offset), (ui_width-10, y_offset), (100, 100, 100), 2)
         y_offset += 20
         
-        # Screen ROI 정보
-        cv2.putText(ui_frame, "Screen ROI Analysis:", (10, y_offset), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 2)
-        y_offset += 25
+        # Screen ROI 분석
+        cv2.putText(ui_frame, f"Screen ROI (Blackouts: {self.screen_blackout_count})", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        y_offset += 23
         
         with self.ui_lock:
-            # 전체 평균 표시
             if len(self.screen_roi_avg) > 0:
                 b, g, r = self.screen_overall_avg
                 brightness = 0.114 * b + 0.587 * g + 0.299 * r
                 text = f"  Overall: R{int(r)} G{int(g)} B{int(b)} Br:{int(brightness)}"
                 cv2.putText(ui_frame, text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (50, 50, 200), 2)
-                # 색상 샘플
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42, (50, 50, 200), 2)
                 cv2.rectangle(ui_frame, (ui_width-70, y_offset-15), 
                              (ui_width-10, y_offset-2), (int(b), int(g), int(r)), -1)
                 cv2.rectangle(ui_frame, (ui_width-70, y_offset-15), 
                              (ui_width-10, y_offset-2), (0, 0, 0), 1)
-                y_offset += 22
+                y_offset += 20
             
-            # 개별 ROI 표시 (최대 8개)
-            display_count = 0
-            for i, avg_color in enumerate(self.screen_roi_avg):
-                if display_count >= 8:
-                    break
+            for i, avg_color in enumerate(self.screen_roi_avg[:8]):
                 b, g, r = avg_color
                 color_name = self.get_color_name(avg_color)
                 text = f"  ROI{i+1}: R{int(r)} G{int(g)} B{int(b)} {color_name}"
                 cv2.putText(ui_frame, text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1)
                 cv2.rectangle(ui_frame, (ui_width-70, y_offset-13), 
                              (ui_width-10, y_offset-2), (int(b), int(g), int(r)), -1)
                 cv2.rectangle(ui_frame, (ui_width-70, y_offset-13), 
                              (ui_width-10, y_offset-2), (0, 0, 0), 1)
-                y_offset += 18
-                display_count += 1
+                y_offset += 17
             
             if len(self.screen_roi_avg) > 8:
-                more_text = f"  +{len(self.screen_roi_avg) - 8} more"
-                cv2.putText(ui_frame, more_text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
-                y_offset += 15
-        
-        y_offset += 8
-        
-        # Screen Blackout 이벤트
-        if len(self.screen_flicker_events) > 0:
-            cv2.putText(ui_frame, "  Screen Blackouts:", (10, y_offset), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 150), 1)
-            y_offset += 18
-            display_count = 0
-            for event in reversed(self.screen_flicker_events):  # 최신순
-                if display_count >= 10:
-                    break
-                text = f"    {event['time']} (-{int(event['brightness_change'])})"
-                cv2.putText(ui_frame, text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 0, 0), 1)
-                y_offset += 15
-                display_count += 1
-            
-            if len(self.screen_flicker_events) > 10:
-                more_text = f"    +{len(self.screen_flicker_events) - 10} more"
-                cv2.putText(ui_frame, more_text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.32, (100, 100, 100), 1)
+                cv2.putText(ui_frame, f"  +{len(self.screen_roi_avg) - 8} more", (10, y_offset), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.33, (100, 100, 100), 1)
                 y_offset += 14
         
-        y_offset += 10
+        y_offset += 6
+        
+        # Screen Blackout 이벤트
+        if len(self.screen_blackout_events) > 0:
+            cv2.putText(ui_frame, "  Recent Blackouts:", (10, y_offset), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 150), 1)
+            y_offset += 17
+            for event in list(reversed(self.screen_blackout_events))[:10]:
+                text = f"    {event['time']} (Δ{int(event['brightness_change'])})"
+                cv2.putText(ui_frame, text, (10, y_offset), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 0, 0), 1)
+                y_offset += 14
+            
+            if len(self.screen_blackout_events) > 10:
+                cv2.putText(ui_frame, f"    +{len(self.screen_blackout_events) - 10} more", (10, y_offset), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (100, 100, 100), 1)
+                y_offset += 13
+        
+        y_offset += 8
         
         # 구분선
         cv2.line(ui_frame, (10, y_offset), (ui_width-10, y_offset), (100, 100, 100), 2)
         y_offset += 20
         
-        # Camera ROI 정보
-        cv2.putText(ui_frame, "Camera ROI Analysis:", (10, y_offset), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 2)
-        y_offset += 25
+        # Camera ROI 분석
+        cv2.putText(ui_frame, f"Camera ROI (Blackouts: {self.camera_blackout_count})", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        y_offset += 23
         
         with self.ui_lock:
-            # 전체 평균 표시
             if len(self.camera_roi_avg) > 0:
                 b, g, r = self.camera_overall_avg
                 brightness = 0.114 * b + 0.587 * g + 0.299 * r
                 text = f"  Overall: R{int(r)} G{int(g)} B{int(b)} Br:{int(brightness)}"
                 cv2.putText(ui_frame, text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (50, 50, 200), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42, (50, 50, 200), 2)
                 cv2.rectangle(ui_frame, (ui_width-70, y_offset-15), 
                              (ui_width-10, y_offset-2), (int(b), int(g), int(r)), -1)
                 cv2.rectangle(ui_frame, (ui_width-70, y_offset-15), 
                              (ui_width-10, y_offset-2), (0, 0, 0), 1)
-                y_offset += 22
+                y_offset += 20
             
-            # 개별 ROI 표시 (최대 8개)
-            display_count = 0
-            for i, avg_color in enumerate(self.camera_roi_avg):
-                if display_count >= 8:
-                    break
+            for i, avg_color in enumerate(self.camera_roi_avg[:8]):
                 b, g, r = avg_color
                 color_name = self.get_color_name(avg_color)
                 text = f"  ROI{i+1}: R{int(r)} G{int(g)} B{int(b)} {color_name}"
                 cv2.putText(ui_frame, text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1)
                 cv2.rectangle(ui_frame, (ui_width-70, y_offset-13), 
                              (ui_width-10, y_offset-2), (int(b), int(g), int(r)), -1)
                 cv2.rectangle(ui_frame, (ui_width-70, y_offset-13), 
                              (ui_width-10, y_offset-2), (0, 0, 0), 1)
-                y_offset += 18
-                display_count += 1
+                y_offset += 17
             
             if len(self.camera_roi_avg) > 8:
-                more_text = f"  +{len(self.camera_roi_avg) - 8} more"
-                cv2.putText(ui_frame, more_text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
-                y_offset += 15
-        
-        y_offset += 8
-        
-        # Camera Blackout 이벤트
-        if len(self.camera_flicker_events) > 0:
-            cv2.putText(ui_frame, "  Camera Blackouts:", (10, y_offset), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 150), 1)
-            y_offset += 18
-            display_count = 0
-            for event in reversed(self.camera_flicker_events):  # 최신순
-                if display_count >= 10:
-                    break
-                text = f"    {event['time']} (-{int(event['brightness_change'])})"
-                cv2.putText(ui_frame, text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 0, 0), 1)
-                y_offset += 15
-                display_count += 1
-            
-            if len(self.camera_flicker_events) > 10:
-                more_text = f"    +{len(self.camera_flicker_events) - 10} more"
-                cv2.putText(ui_frame, more_text, (10, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.32, (100, 100, 100), 1)
+                cv2.putText(ui_frame, f"  +{len(self.camera_roi_avg) - 8} more", (10, y_offset), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.33, (100, 100, 100), 1)
                 y_offset += 14
         
-        # 하단 고정 영역 (단축키)
-        y_offset = ui_height - 130
+        y_offset += 6
         
-        # 구분선
+        # Camera Blackout 이벤트
+        if len(self.camera_blackout_events) > 0:
+            cv2.putText(ui_frame, "  Recent Blackouts:", (10, y_offset), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 150), 1)
+            y_offset += 17
+            for event in list(reversed(self.camera_blackout_events))[:10]:
+                text = f"    {event['time']} (Δ{int(event['brightness_change'])})"
+                cv2.putText(ui_frame, text, (10, y_offset), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 0, 0), 1)
+                y_offset += 14
+            
+            if len(self.camera_blackout_events) > 10:
+                cv2.putText(ui_frame, f"    +{len(self.camera_blackout_events) - 10} more", (10, y_offset), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (100, 100, 100), 1)
+                y_offset += 13
+        
+        # 하단 고정
+        y_offset = ui_height - 150
+        
         cv2.line(ui_frame, (10, y_offset), (ui_width-10, y_offset), (100, 100, 100), 2)
+        y_offset += 18
+        
+        cv2.putText(ui_frame, "Hotkeys:", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+        y_offset += 20
+        cv2.putText(ui_frame, "Ctrl+Alt+W : Start Recording", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 100, 0), 1)
+        y_offset += 17
+        cv2.putText(ui_frame, "Ctrl+Alt+E : Stop Recording", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 150), 1)
+        y_offset += 17
+        cv2.putText(ui_frame, "Ctrl+Alt+R : Toggle Blackout Recording", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (150, 100, 0), 1)
+        y_offset += 17
+        cv2.putText(ui_frame, "Ctrl+Alt+Q : Exit Program", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (150, 0, 0), 1)
         y_offset += 20
         
-        # 단축키 안내
-        cv2.putText(ui_frame, "Hotkeys:", (10, y_offset), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-        y_offset += 23
-        cv2.putText(ui_frame, "Ctrl+Alt+W : Start Recording", (10, y_offset), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 100, 0), 1)
-        y_offset += 18
-        cv2.putText(ui_frame, "Ctrl+Alt+E : Stop Recording", (10, y_offset), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 150), 1)
-        y_offset += 18
-        cv2.putText(ui_frame, "Ctrl+Alt+Q : Exit Program", (10, y_offset), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 0, 0), 1)
-        y_offset += 22
-        
-        # BLACK_OUT 저장 안내
-        cv2.putText(ui_frame, "* Blackout clips -> ~/Desktop/BLACK_OUT", (10, y_offset), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 100, 100), 1)
+        cv2.putText(ui_frame, "* Blackout clips -> ~/Desktop/BLACK_OUT/[SCREEN|CAMERA]", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
         
         return ui_frame
 
     def get_screen(self):
         with mss.mss() as sct:
-            monitor = sct.monitors[2] 
+            monitor = sct.monitors[1]
             while not self.stop_event.is_set():
                 start_t = time.time()
                 img = sct.grab(monitor)
@@ -466,12 +551,13 @@ class ScreenCameraRecorder:
                 if not self.screen_queue.full():
                     self.screen_queue.put(frame)
                 elapsed = time.time() - start_t
-                time.sleep(max(0.001, (1/self.target_fps) - elapsed))
+                time.sleep(max(0.001, (1/self.actual_screen_fps) - elapsed))
 
     def get_camera(self):
         cap = cv2.VideoCapture(1)
         if not cap.isOpened():
             cap = cv2.VideoCapture(0)
+        
         while not self.stop_event.is_set():
             start_t = time.time()
             ret, frame = cap.read()
@@ -479,20 +565,21 @@ class ScreenCameraRecorder:
                 if not self.camera_queue.full():
                     self.camera_queue.put(frame)
             elapsed = time.time() - start_t
-            time.sleep(max(0.001, (1/self.target_fps) - elapsed))
+            time.sleep(max(0.001, (1/self.actual_camera_fps) - elapsed))
+        
         cap.release()
 
     def add_ui_elements(self, frame, rois):
         now = datetime.now()
         time_str = now.strftime("%Y-%m-%d %H:%M:%S")
-        cv2.putText(frame, time_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, time_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
         if self.recording and self.start_time:
             elapsed = time.time() - self.start_time
             minutes, seconds = divmod(int(elapsed), 60)
             hours, minutes = divmod(minutes, 60)
             timer_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            cv2.putText(frame, timer_str, (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, timer_str, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
         for i, (rx, ry, rw, rh) in enumerate(rois):
             cv2.rectangle(frame, (rx, ry), (rx + rw, ry + rh), (0, 0, 255), 2)
@@ -500,35 +587,75 @@ class ScreenCameraRecorder:
         
         return frame
 
-    def start_recording(self):
-        if self.recording: return
-        desktop = os.path.expanduser("~/Desktop")
-        self.output_dir = os.path.join(desktop, datetime.now().strftime("Rec_%Y%m%d_%H%M%S"))
-        os.makedirs(self.output_dir, exist_ok=True)
+    def create_new_segment(self):
+        """30분 단위 새 세그먼트 생성"""
+        if self.screen_writer:
+            self.screen_writer.release()
+        if self.camera_writer:
+            self.camera_writer.release()
+        
+        segment_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         with mss.mss() as sct:
-            mon = sct.monitors[2]
+            mon = sct.monitors[1]
+            screen_path = os.path.join(self.output_dir, f'screen_{segment_time}.mp4')
             self.screen_writer = cv2.VideoWriter(
-                os.path.join(self.output_dir, 'screen.mp4'),
-                cv2.VideoWriter_fourcc(*'mp4v'), self.target_fps, (mon['width'], mon['height'])
+                screen_path,
+                cv2.VideoWriter_fourcc(*'mp4v'), 
+                self.actual_screen_fps, 
+                (mon['width'], mon['height'])
             )
+            print(f"New screen segment: {screen_path}")
+        
         try:
             temp_frame = self.camera_queue.get(timeout=2)
             h, w = temp_frame.shape[:2]
+            camera_path = os.path.join(self.output_dir, f'camera_{segment_time}.mp4')
             self.camera_writer = cv2.VideoWriter(
-                os.path.join(self.output_dir, 'camera.mp4'),
-                cv2.VideoWriter_fourcc(*'mp4v'), self.target_fps, (w, h)
+                camera_path,
+                cv2.VideoWriter_fourcc(*'mp4v'), 
+                self.actual_camera_fps, 
+                (w, h)
             )
-        except: pass
+            print(f"New camera segment: {camera_path}")
+        except:
+            pass
+        
+        self.current_segment_start = time.time()
+
+    def start_recording(self):
+        if self.recording: 
+            return
+        
+        desktop = os.path.expanduser("~/Desktop")
+        self.output_dir = os.path.join(desktop, datetime.now().strftime("Rec_%Y%m%d_%H%M%S"))
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        self.create_new_segment()
         self.start_time = time.time()
         self.recording = True
+        print(f"Recording started: {self.output_dir}")
 
     def stop_recording(self):
-        if not self.recording: return
+        if not self.recording: 
+            return
+        
         self.recording = False
         time.sleep(0.3)
-        if self.screen_writer: self.screen_writer.release()
-        if self.camera_writer: self.camera_writer.release()
+        
+        if self.screen_writer: 
+            self.screen_writer.release()
+        if self.camera_writer: 
+            self.camera_writer.release()
+        
         self.screen_writer = self.camera_writer = None
+        print("Recording stopped")
+
+    def toggle_blackout_recording(self):
+        """Blackout 녹화 토글"""
+        self.blackout_recording_enabled = not self.blackout_recording_enabled
+        status = "ENABLED" if self.blackout_recording_enabled else "DISABLED"
+        print(f"Blackout recording {status}")
 
     def stop_and_exit(self):
         self.running = False
@@ -536,6 +663,10 @@ class ScreenCameraRecorder:
         self.stop_recording()
 
     def run(self):
+        # 카메라 FPS 감지
+        self.detect_camera_fps()
+        self.actual_screen_fps = self.target_fps  # 화면은 목표 FPS 사용
+        
         threading.Thread(target=self.get_screen, daemon=True).start()
         threading.Thread(target=self.get_camera, daemon=True).start()
 
@@ -547,32 +678,45 @@ class ScreenCameraRecorder:
         
         hotkeys = {
             '<ctrl>+<alt>+w': self.start_recording, 
-            '<ctrl>+<alt>+e': self.stop_recording, 
+            '<ctrl>+<alt>+e': self.stop_recording,
+            '<ctrl>+<alt>+r': self.toggle_blackout_recording,
             '<ctrl>+<alt>+q': self.stop_and_exit
         }
 
         with keyboard.GlobalHotKeys(hotkeys) as listener:
             while self.running:
+                # 30분 단위 세그먼트 체크
+                if self.recording and self.current_segment_start:
+                    if time.time() - self.current_segment_start >= self.segment_duration:
+                        print("Creating new 30-minute segment...")
+                        self.create_new_segment()
+                
                 # Screen 처리
                 if not self.screen_queue.empty():
                     s_frame = self.screen_queue.get()
                     
-                    # 프레임 버퍼에 추가 (±10초 저장용)
+                    # 버퍼 관리
                     self.screen_buffer.append(s_frame.copy())
-                    if len(self.screen_buffer) > self.buffer_max_size:
+                    if len(self.screen_buffer) > self.screen_buffer_max_size:
                         self.screen_buffer.pop(0)
                     
-                    # ROI 평균값 계산
+                    # ROI 분석
                     if self.screen_rois:
                         with self.ui_lock:
                             self.screen_roi_avg = self.calculate_roi_average(s_frame, self.screen_rois)
-                            # 전체 ROI 평균 계산
+                            
                             if len(self.screen_roi_avg) > 0:
                                 self.screen_overall_avg = np.mean(self.screen_roi_avg, axis=0)
-                                # 깜빡임 감지
-                                self.detect_flicker(self.screen_overall_avg, self.screen_prev_avg, "screen")
-                                # 이전 값 업데이트
-                                self.screen_prev_avg = self.screen_overall_avg.copy()
+                                
+                                # Blackout 감지
+                                if len(self.screen_roi_prev) > 0:
+                                    self.detect_blackout(
+                                        self.screen_roi_avg, 
+                                        self.screen_roi_prev, 
+                                        "screen"
+                                    )
+                                
+                                self.screen_roi_prev = [avg.copy() for avg in self.screen_roi_avg]
                     
                     s_frame_ui = self.add_ui_elements(s_frame.copy(), self.screen_rois)
                     if self.recording and self.screen_writer: 
@@ -583,29 +727,35 @@ class ScreenCameraRecorder:
                 if not self.camera_queue.empty():
                     c_frame = self.camera_queue.get()
                     
-                    # 프레임 버퍼에 추가 (±10초 저장용)
+                    # 버퍼 관리
                     self.camera_buffer.append(c_frame.copy())
-                    if len(self.camera_buffer) > self.buffer_max_size:
+                    if len(self.camera_buffer) > self.camera_buffer_max_size:
                         self.camera_buffer.pop(0)
                     
-                    # ROI 평균값 계산
+                    # ROI 분석
                     if self.camera_rois:
                         with self.ui_lock:
                             self.camera_roi_avg = self.calculate_roi_average(c_frame, self.camera_rois)
-                            # 전체 ROI 평균 계산
+                            
                             if len(self.camera_roi_avg) > 0:
                                 self.camera_overall_avg = np.mean(self.camera_roi_avg, axis=0)
-                                # 깜빡임 감지
-                                self.detect_flicker(self.camera_overall_avg, self.camera_prev_avg, "camera")
-                                # 이전 값 업데이트
-                                self.camera_prev_avg = self.camera_overall_avg.copy()
+                                
+                                # Blackout 감지
+                                if len(self.camera_roi_prev) > 0:
+                                    self.detect_blackout(
+                                        self.camera_roi_avg, 
+                                        self.camera_roi_prev, 
+                                        "camera"
+                                    )
+                                
+                                self.camera_roi_prev = [avg.copy() for avg in self.camera_roi_avg]
                     
                     c_frame_ui = self.add_ui_elements(c_frame.copy(), self.camera_rois)
                     if self.recording and self.camera_writer: 
                         self.camera_writer.write(c_frame_ui)
                     cv2.imshow("Camera Preview", c_frame_ui)
                 
-                # Control Panel UI 업데이트
+                # Control Panel
                 control_ui = self.create_control_ui()
                 cv2.imshow("Control Panel", control_ui)
                 

@@ -9,7 +9,7 @@ from datetime import datetime
 class AutoClicker:
     def __init__(self, root):
         self.root = root
-        self.root.title("귀요미")
+        self.root.title("1234")
         self.root.geometry("350x300")
         
         self.running = False
@@ -20,7 +20,7 @@ class AutoClicker:
 
         # UI 구성
         tk.Label(root, text=f"프로그램 시작 시각: {self.app_launch_time}", fg="blue").pack(pady=5)
-        
+
         tk.Label(root, text="주기 (초):").pack()
         self.entry = tk.Entry(root, justify='center')
         self.entry.insert(0, "1.0")

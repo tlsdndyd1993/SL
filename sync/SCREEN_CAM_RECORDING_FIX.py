@@ -11,52 +11,53 @@ import mss
 class ScreenCameraRecorder:
     def __init__(self):
         self.recording = False
+        self.running = True
         self.start_time = None
-        self.screen_frames = queue.Queue()
-        self.camera_frames = queue.Queue()
         self.stop_event = threading.Event()
+        
+        self.screen_queue = queue.Queue(maxsize=10)
+        self.camera_queue = queue.Queue(maxsize=10)
+        
         self.screen_writer = None
         self.camera_writer = None
+        
+        self.target_fps = 30.0
 
-    def on_press(self, key):
-        try:
-            if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-                pass
-        except:
-            pass
-
-    def on_release(self, key):
-        try:
-            if key.char == 'w':
-                if not self.recording:
-                    self.start_recording()
-            elif key.char == 'q':
-                self.stop_and_exit()
-            elif key.char == 'e':
-                self.stop_recording()
-        except AttributeError:
-            pass
+    # 기존 on_release 메서드는 삭제하거나 주석 처리해도 됩니다.
+    # GlobalHotkeys가 이를 대신합니다.
 
     def get_screen(self):
-        sct = mss.mss()
-        monitor = sct.monitors[1]
-        while not self.stop_event.is_set():
-            screenshot = sct.grab(monitor)
-            frame = np.array(screenshot)
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-            self.screen_frames.put(frame)
-            time.sleep(0.033)
+        with mss.mss() as sct:
+            monitor = sct.monitors[1] 
+            while not self.stop_event.is_set():
+                start_t = time.time()
+                img = sct.grab(monitor)
+                frame = cv2.cvtColor(np.array(img), cv2.COLOR_BGRA2BGR)
+                
+                if not self.screen_queue.full():
+                    self.screen_queue.put(frame)
+                
+                elapsed = time.time() - start_t
+                time.sleep(max(0.001, (1/self.target_fps) - elapsed))
 
     def get_camera(self):
+        # 카메라 인덱스는 환경에 따라 0 또는 1로 설정
         cap = cv2.VideoCapture(1)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(0)
+
         while not self.stop_event.is_set():
+            start_t = time.time()
             ret, frame = cap.read()
             if ret:
-                self.camera_frames.put(frame)
-            time.sleep(0.033)
+                if not self.camera_queue.full():
+                    self.camera_queue.put(frame)
+            
+            elapsed = time.time() - start_t
+            time.sleep(max(0.001, (1/self.target_fps) - elapsed))
         cap.release()
 
-    def add_ui_elements(self, frame):
+    def add_ui_elements(self, frame, label=""):
         now = datetime.now()
         time_str = now.strftime("%Y-%m-%d %H:%M:%S")
         cv2.putText(frame, time_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -70,84 +71,99 @@ class ScreenCameraRecorder:
 
             start_time_str = datetime.fromtimestamp(self.start_time).strftime("%Y-%m-%d %H:%M:%S")
             cv2.putText(frame, f"Started: {start_time_str}", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-
+        
         return frame
 
-    def create_output_directory(self):
-        desktop = os.path.expanduser("~/Desktop")
-        folder_name = datetime.fromtimestamp(self.start_time).strftime("%Y%m%d_%H%M%S")
-        output_dir = os.path.join(desktop, folder_name)
-        os.makedirs(output_dir, exist_ok=True)
-        return output_dir
-
     def start_recording(self):
-        self.recording = True
+        if self.recording:
+            return
+            
+        desktop = os.path.expanduser("~/Desktop")
+        self.output_dir = os.path.join(desktop, datetime.now().strftime("Rec_%Y%m%d_%H%M%S"))
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # 1. 스크린 Writer 설정
+        with mss.mss() as sct:
+            mon = sct.monitors[1]
+            self.screen_writer = cv2.VideoWriter(
+                os.path.join(self.output_dir, 'screen.mp4'),
+                cv2.VideoWriter_fourcc(*'mp4v'), self.target_fps, (mon['width'], mon['height'])
+            )
+
+        # 2. 카메라 Writer 설정
+        try:
+            temp_frame = self.camera_queue.get(timeout=2)
+            h, w = temp_frame.shape[:2]
+            self.camera_writer = cv2.VideoWriter(
+                os.path.join(self.output_dir, 'camera.mp4'),
+                cv2.VideoWriter_fourcc(*'mp4v'), self.target_fps, (w, h)
+            )
+            print(f"녹화 시작: {self.output_dir}")
+        except:
+            print("에러: 카메라 프레임을 받지 못했습니다.")
+
         self.start_time = time.time()
+        self.recording = True
 
     def stop_recording(self):
+        if not self.recording:
+            return
+            
         self.recording = False
+        time.sleep(0.3)
+        if self.screen_writer: self.screen_writer.release()
+        if self.camera_writer: self.camera_writer.release()
+        self.screen_writer = None
+        self.camera_writer = None
+        print("녹화 종료 및 파일 저장 완료.")
 
     def stop_and_exit(self):
+        print("프로그램 종료 중...")
+        self.running = False
         self.stop_event.set()
-
-    def save_videos(self, output_dir, screen_frames_list, camera_frames_list):
-        if screen_frames_list:
-            h, w = screen_frames_list[0].shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(os.path.join(output_dir, 'screen.mp4'), fourcc, 30.0, (w, h))
-            for frame in screen_frames_list:
-                out.write(frame)
-            out.release()
-
-        if camera_frames_list:
-            h, w = camera_frames_list[0].shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(os.path.join(output_dir, 'camera.mp4'), fourcc, 30.0, (w, h))
-            for frame in camera_frames_list:
-                out.write(frame)
-            out.release()
+        self.stop_recording()
 
     def run(self):
+        # 영상 획득 스레드 시작
         threading.Thread(target=self.get_screen, daemon=True).start()
         threading.Thread(target=self.get_camera, daemon=True).start()
 
-        listener = keyboard.Listener(on_release=self.on_release)
-        listener.start()
+        cv2.namedWindow("Screen Preview", cv2.WINDOW_NORMAL)
+        cv2.namedWindow("Camera Preview", cv2.WINDOW_NORMAL)
+        
+        # 단축키 설정: Ctrl + Alt + W(시작), E(중지), Q(종료)
+        # 일반 타이핑과 겹치지 않게 하기 위해 <ctrl>+<alt> 조합을 권장합니다.
+        hotkeys = {
+            '<ctrl>+<alt>+w': self.start_recording,
+            '<ctrl>+<alt>+e': self.stop_recording,
+            '<ctrl>+<alt>+q': self.stop_and_exit
+        }
 
-        screen_frames_list = []
-        camera_frames_list = []
+        with keyboard.GlobalHotKeys(hotkeys) as listener:
+            while self.running:
+                # 스크린 처리
+                if not self.screen_queue.empty():
+                    s_frame = self.screen_queue.get()
+                    s_frame = self.add_ui_elements(s_frame, "SCREEN")
+                    if self.recording and self.screen_writer:
+                        self.screen_writer.write(s_frame)
+                    cv2.imshow("Screen Preview", s_frame)
 
-        while not self.stop_event.is_set():
-            try:
-                screen_frame = self.screen_frames.get_nowait() if not self.screen_frames.empty() else None
-                camera_frame = self.camera_frames.get_nowait() if not self.camera_frames.empty() else None
+                # 카메라 처리
+                if not self.camera_queue.empty():
+                    c_frame = self.camera_queue.get()
+                    if self.recording and self.camera_writer:
+                        c_frame_ui = self.add_ui_elements(c_frame.copy(), "CAMERA")
+                        self.camera_writer.write(c_frame_ui)
+                        cv2.imshow("Camera Preview", c_frame_ui)
+                    else:
+                        cv2.imshow("Camera Preview", self.add_ui_elements(c_frame, "CAMERA"))
+                cv2.waitKey(1)
 
-                if screen_frame is not None:
-                    screen_frame = self.add_ui_elements(screen_frame)
-                    cv2.imshow("Screen Recording", screen_frame)
-                    if self.recording:
-                        screen_frames_list.append(screen_frame.copy())
-
-                if camera_frame is not None:
-                    camera_frame = self.add_ui_elements(camera_frame)
-                    cv2.imshow("Camera Recording", camera_frame)
-                    if self.recording:
-                        camera_frames_list.append(camera_frame.copy())
-
-                if cv2.waitKey(1) & 0xFF == ord('ctrl+q'):
-                    self.stop_and_exit()
-            except Exception:
-                pass
-
+            
+            listener.stop()
+        
         cv2.destroyAllWindows()
 
-        if self.start_time and (screen_frames_list or camera_frames_list):
-            output_dir = self.create_output_directory()
-            self.save_videos(output_dir, screen_frames_list, camera_frames_list)
-            print(f"Recording saved to {output_dir}")
-        else:
-            print("No frames recorded")
-
 if __name__ == "__main__":
-    recorder = ScreenCameraRecorder()
-    recorder.run()
+    ScreenCameraRecorder().run()
