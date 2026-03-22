@@ -1,3 +1,4 @@
+# Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 import cv2
 import numpy as np
 import threading
@@ -543,7 +544,7 @@ class ScreenCameraRecorder:
 
     def get_screen(self):
         with mss.mss() as sct:
-            monitor = sct.monitors[1]
+            monitor = sct.monitors[2]
             while not self.stop_event.is_set():
                 start_t = time.time()
                 img = sct.grab(monitor)
@@ -597,7 +598,7 @@ class ScreenCameraRecorder:
         segment_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         with mss.mss() as sct:
-            mon = sct.monitors[1]
+            mon = sct.monitors[2]
             screen_path = os.path.join(self.output_dir, f'screen_{segment_time}.mp4')
             self.screen_writer = cv2.VideoWriter(
                 screen_path,
